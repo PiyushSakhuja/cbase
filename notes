@@ -1,0 +1,32 @@
+A page is a fixed-size block of data that your database reads/writes at once from disk.
+Why 4096 bytes?
+    OS disk block = 4KB
+    CPU cache friendly
+    Used by SQLite, PostgreSQL, MySQL
+
+endianess
+
+
+A file is simply:
+    A long line of bytes stored on disk
+
+Byte index: 0   1   2   3   4   5
+File data:  H   E   L   L   O
+
+
+mydb/
+├── storage/
+│   ├── page.h
+│   ├── heap_file.cpp
+│   └── disk_manager.cpp
+├── index/
+│   ├── btree.cpp
+│   └── hash_index.cpp
+├── parser/
+│   ├── tokenizer.cpp
+│   └── parser.cpp
+├── execution/
+│   └── executor.cpp
+├── transaction/
+│   └── wal.cpp
+└── main.cpp
