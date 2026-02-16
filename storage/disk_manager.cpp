@@ -27,3 +27,10 @@ void DiskManager::read_page(int page_id, char *data)
         file.clear();
     }
 }
+
+int DiskManager::get_page_count() {
+    file.seekg(0, std::ios::end);
+    std::streampos size = file.tellg();
+    return static_cast<int>(size / PAGE_SIZE);
+}
+

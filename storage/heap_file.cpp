@@ -2,26 +2,18 @@
 #include <cstring>
 #include <iostream>
 
-
 HeapFile::HeapFile(BufferPool *bp)
     : buffer_pool_(bp)
 {
-    next_page_id_ = 0;
+    int page_count = buffer_pool_->get_disk_manager()->get_page_count();
 
-   
-    while (true)
+    if (page_count == 0)
     {
-        Page *page = buffer_pool_->fetch_page(next_page_id_);
-        if (page->page_id == -1)
-        {
-            break;
-        }
-        next_page_id_++;
+        next_page_id_ = 0;
     }
-
-    if (next_page_id_ > 0)
+    else
     {
-        next_page_id_--; 
+        next_page_id_ = page_count - 1;
     }
 }
 
@@ -40,13 +32,24 @@ void HeapFile::initialize_page(Page *page)
 
 RID HeapFile::insert(const Record &record)
 {
+    std::cout << "Inserting into page " << next_page_id_ << std::endl;
+    int page_count = buffer_pool_->get_disk_manager()->get_page_count();
+
+    bool new_page = (next_page_id_ >= page_count);
+
     Page *page = buffer_pool_->fetch_page(next_page_id_);
 
-    if (page->page_id == -1)
+    if (page == nullptr)
     {
-        page->page_id = next_page_id_;
-        initialize_page(page);
+        std::cerr << "Failed to fetch page\n";
+        exit(1);
     }
+
+ 
+
+    if (new_page) {
+    initialize_page(page);
+}
 
     char *data = page->get_data();
     PageHeader header = read_page_header(data);
