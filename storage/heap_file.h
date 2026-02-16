@@ -9,6 +9,12 @@ struct Record
     int age;
 };
 
+struct RID {
+    uint16_t page_id;
+    uint16_t slot_id;
+};
+
+
 struct PageHeader
 {
     uint16_t record_count;      // how many record are present means if some deleted it will not count
@@ -28,12 +34,12 @@ class HeapFile
 public:
     explicit HeapFile(BufferPool *buffer_pool);
 
-    void insert(const Record &record);
     void scan_all();
     void Delete(uint16_t page_id, uint16_t slot_id);
-
-
-private:
+    RID insert(const Record &record);
+    
+    
+    private:
     BufferPool *buffer_pool_;
     int next_page_id_;
 

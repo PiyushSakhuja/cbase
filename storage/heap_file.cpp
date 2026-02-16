@@ -2,8 +2,28 @@
 #include <cstring>
 #include <iostream>
 
+
 HeapFile::HeapFile(BufferPool *bp)
-    : buffer_pool_(bp), next_page_id_(0) {}
+    : buffer_pool_(bp)
+{
+    next_page_id_ = 0;
+
+   
+    while (true)
+    {
+        Page *page = buffer_pool_->fetch_page(next_page_id_);
+        if (page->page_id == -1)
+        {
+            break;
+        }
+        next_page_id_++;
+    }
+
+    if (next_page_id_ > 0)
+    {
+        next_page_id_--; 
+    }
+}
 
 void HeapFile::initialize_page(Page *page)
 {
@@ -18,11 +38,10 @@ void HeapFile::initialize_page(Page *page)
     page->set_dirty(true);
 }
 
-void HeapFile::insert(const Record &record)
+RID HeapFile::insert(const Record &record)
 {
     Page *page = buffer_pool_->fetch_page(next_page_id_);
 
-    // initialize page if first use
     if (page->page_id == -1)
     {
         page->page_id = next_page_id_;
@@ -34,26 +53,28 @@ void HeapFile::insert(const Record &record)
 
     uint16_t record_size = sizeof(Record);
 
-    uint16_t free_space = header.free_space_offset - get_free_space_start(header);
+    uint16_t free_space =
+        header.free_space_offset - get_free_space_start(header);
+
     uint16_t needed_space = record_size + sizeof(Slot);
 
     if (free_space < needed_space)
     {
         next_page_id_++;
-        insert(record);
-        return;
+        return insert(record);
     }
 
     int slot_id = -1;
     for (uint16_t i = 0; i < header.slot_count; i++)
     {
-        Slot slot = read_slot(data, i);
-        if (slot.is_used == 0)
+        Slot s = read_slot(data, i);
+        if (s.is_used == 0)
         {
             slot_id = i;
             break;
         }
     }
+
     bool new_slot = false;
     if (slot_id == -1)
     {
@@ -64,12 +85,13 @@ void HeapFile::insert(const Record &record)
     header.free_space_offset -= record_size;
     uint16_t record_offset = header.free_space_offset;
 
-    std::memcpy(data + record_offset, &record, record_size); //(data is raw bytes of page which starts from 0 of the page usme add krenge + record_offset mtlb last se record write karenge,kya write karenge,kitna write karenge)
+    std::memcpy(data + record_offset, &record, record_size);
 
     Slot slot;
     slot.offset = record_offset;
     slot.size = record_size;
     slot.is_used = 1;
+
     write_slot(data, slot_id, slot);
 
     if (new_slot)
@@ -79,7 +101,12 @@ void HeapFile::insert(const Record &record)
 
     header.record_count++;
     write_page_header(data, header);
+
     page->set_dirty(true);
+
+    return RID{
+        static_cast<uint16_t>(next_page_id_),
+        static_cast<uint16_t>(slot_id)};
 }
 
 void HeapFile::scan_all()
