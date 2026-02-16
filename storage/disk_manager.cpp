@@ -18,11 +18,12 @@ void DiskManager::write_page(int page_id, const char *data)
     file.write(data,PAGE_SIZE);
     file.flush();
 }
-void DiskManager::read_page(int page_id,char *data)
+void DiskManager::read_page(int page_id, char *data)
 {
     file.seekg(page_id * PAGE_SIZE);
-    if(file.read(data,PAGE_SIZE)){
-        std::memset(data,0,PAGE_SIZE);
+
+    if (!file.read(data, PAGE_SIZE)) {
+        std::memset(data, 0, PAGE_SIZE);
         file.clear();
     }
 }
