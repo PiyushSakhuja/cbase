@@ -11,8 +11,8 @@ This is an educational database, not production-ready.
 
 ## 2. Language & Build
 - Language: C++17
-- Compiler: g++ / clang++
-- Platform: Linux / Windows
+- Compiler: g++ 
+- Platform: Windows
 - Binary file storage (no text storage)
 
 ---
