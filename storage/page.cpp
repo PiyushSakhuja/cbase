@@ -18,3 +18,9 @@ void Page::set_dirty(bool d){
 bool Page::is_dirty() const{
     return dirty;
 }
+
+void Page::reset(int new_page_id){
+    page_id = new_page_id;
+    dirty = false;
+    std::memset(data, 0, PAGE_SIZE);
+}

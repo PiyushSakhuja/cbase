@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CBase — Database Storage Engine</title>
+<meta name="description" content="A persistent storage engine built from scratch in C++: 4 KB slotted pages, a 3-frame buffer pool with round-robin eviction, and RID-based record addressing.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2318181B'/%3E%3Ctext x='8' y='12' font-family='monospace' font-size='10' fill='%23FAFAF9' text-anchor='middle'%3EC%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head">
+  <nav class="nav container" aria-label="Sections">
+    <a class="brand mono" href="#top">CBase</a>
+    <div class="nav-links" id="navLinks">
+      <a href="#architecture">Architecture</a>
+      <a href="#page">Page</a>
+      <a href="#buffer-pool">Buffer Pool</a>
+      <a href="#lifecycle">Lifecycle</a>
+      <a href="#bugs">Bugs</a>
+      <a href="#tests">Tests</a>
+      <a href="#benchmark">Benchmark</a>
+      <a href="#limitations">Limitations</a>
+    </div>
+  </nav>
+</header>
+
+<main id="main">
+
+<!-- ============ 1 · HERO ============ -->
+<section class="hero" id="top">
+  <div class="container">
+    <p class="eyebrow mono">Database Storage Engine</p>
+    <h1>CBase</h1>
+    <p class="sub">A lightweight database storage engine built from scratch in C++.</p>
+    <p class="lede">Explore how records move from memory to pages, through a buffer pool, and onto persistent storage.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#architecture">Explore the Engine</a>
+      <a class="btn btn-ghost" href="https://github.com/PiyushSakhuja/cbase" title="Placeholder — replace with your repository URL">View Source</a>
+    </div>
+
+    <div class="stats" role="list" aria-label="Key engine facts">
+      <div class="stat" role="listitem">
+        <span class="stat-num mono">4 KB</span>
+        <span class="stat-label">Pages</span>
+      </div>
+      <div class="stat" role="listitem">
+        <span class="stat-num mono">3</span>
+        <span class="stat-label">Buffer Frames</span>
+      </div>
+      <div class="stat" role="listitem">
+        <span class="stat-num mono">38</span>
+        <span class="stat-label">Tests · 4,811 checks</span>
+      </div>
+    </div>
+
+  
+  </div>
+</section>
+
+<!-- ============ 2 · ARCHITECTURE ============ -->
+<section class="section" id="architecture">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">01</p>
+      <h2>The Storage Pipeline</h2>
+      <p class="sec-desc">Every operation descends the same four layers. Select a layer to see its responsibility — each maps to exactly one source file in the repository.</p>
+    </header>
+
+    <div class="arch-grid">
+      <div class="pipeline" role="tablist" aria-label="Storage pipeline layers">
+        <button class="pipe" role="tab" aria-selected="false" data-component="cli" id="tab-cli" aria-controls="arch-detail">
+          <span class="pipe-name">CLI</span>
+          <span class="pipe-file mono">main.cpp</span>
+        </button>
+        <div class="pipe-arrow mono" aria-hidden="true">↓</div>
+        <button class="pipe" role="tab" aria-selected="true" data-component="heap" id="tab-heap" aria-controls="arch-detail">
+          <span class="pipe-name">HeapFile</span>
+          <span class="pipe-file mono">storage/heap_file.cpp</span>
+        </button>
+        <div class="pipe-arrow mono" aria-hidden="true">↓</div>
+        <button class="pipe" role="tab" aria-selected="false" data-component="pool" id="tab-pool" aria-controls="arch-detail">
+          <span class="pipe-name">BufferPool</span>
+          <span class="pipe-file mono">storage/buffer_pool.cpp</span>
+        </button>
+        <div class="pipe-arrow mono" aria-hidden="true">↓</div>
+        <button class="pipe" role="tab" aria-selected="false" data-component="disk" id="tab-disk" aria-controls="arch-detail">
+          <span class="pipe-name">DiskManager</span>
+          <span class="pipe-file mono">storage/disk_manager.cpp</span>
+        </button>
+        <div class="pipe-arrow mono" aria-hidden="true">↓</div>
+        <button class="pipe" role="tab" aria-selected="false" data-component="file" id="tab-file" aria-controls="arch-detail">
+          <span class="pipe-name">Binary File</span>
+          <span class="pipe-file mono">mydb.dat</span>
+        </button>
+      </div>
+
+      <div class="arch-detail" id="arch-detail" role="tabpanel" aria-labelledby="tab-heap">
+        <h3 class="mono" id="arch-detail-title">HeapFile</h3>
+        <p class="mono arch-detail-file" id="arch-detail-file">storage/heap_file.cpp</p>
+        <p id="arch-detail-desc">Record management and RID addressing. HeapFile owns the slotted-page layout: slot directories, free-space accounting, logical deletion, and sequential scan.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3 · PAGE VISUALIZER ============ -->
+<section class="section" id="page">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">02</p>
+      <h2>Inside a 4 KB Page</h2>
+      <p class="sec-desc">CBase packs records into slotted pages. The slot directory grows downward from the 6-byte header; records grow upward from the end of the page; free space lives in between. Byte counts below are the engine’s real layout, pinned by <code>static_assert</code> at 6 / 6 / 8 bytes.</p>
+    </header>
+
+    <div class="page-grid">
+      <div class="page-diagram mono" aria-label="Slotted page diagram — conceptual visualization with exact byte counts">
+        <div class="pg-block pg-header">
+          <span>Page Header — 6 B</span>
+          <span class="pg-bytes">bytes 0–5</span>
+        </div>
+        <div class="pg-block pg-hdrnote">record_count · slot_count · free_space_offset</div>
+        <div class="pg-slots" id="pgSlots"><!-- slot rows injected by script.js --></div>
+        <div class="pg-block pg-free" id="pgFree">
+          <span id="pgFreeLabel">FREE SPACE — 4,048 B</span>
+          <span class="pg-bytes" id="pgFreeBytes">bytes 24–4071</span>
+        </div>
+        <div class="pg-records" id="pgRecords"><!-- record rows injected by script.js --></div>
+        <div class="pg-foot">
+          <span>slot directory grows down ↑</span>
+          <span>4096 bytes</span>
+          <span>records grow up ↑</span>
+        </div>
+      </div>
+
+      <div class="page-side">
+        <div class="panel">
+          <p class="panel-title mono">page 0 — live layout</p>
+          <div class="pg-readout mono" aria-live="polite">
+            <div><span>slots</span><span id="rdSlots">3</span></div>
+            <div><span>records</span><span id="rdRecords">3</span></div>
+            <div><span>free space</span><span id="rdFree">4,048 B</span></div>
+            <div><span>last RID</span><span id="rdRid">(0, 2)</span></div>
+            <div><span>last record at</span><span id="rdOffset">bytes 4072–4079</span></div>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-primary" id="pgInsert">+ Insert record</button>
+            <button class="btn btn-ghost" id="pgReset">Reset</button>
+          </div>
+          <p class="panel-note" id="pgNote">A page holds at most 292 records — (4096 − 6) / (8 + 6).</p>
+        </div>
+
+        <ul class="facts mono">
+          <li><span>PageHeader</span><span>6 bytes</span></li>
+          <li><span>Slot (offset · size · is_used)</span><span>6 bytes</span></li>
+          <li><span>Record (id · age)</span><span>8 bytes</span></li>
+          <li><span>records per page (max)</span><span>292</span></li>
+          <li><span>max slot directory</span><span>681 slots</span></li>
+        </ul>
+
+        <p class="viz-tag mono">conceptual visualization — not to scale, byte arithmetic is exact</p>
+
+      
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 4 · BUFFER POOL ============ -->
+<section class="section" id="buffer-pool">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">03</p>
+      <h2>Buffer Pool</h2>
+      <p class="sec-desc">Three frames sit between HeapFile and the disk. A fetched page is served from a frame on a hit; on a miss it is read from disk — and when the pool is full, a victim frame is reclaimed round-robin, with a dirty victim written back first.</p>
+    </header>
+
+    <div class="bp-grid">
+      <div class="bp-left">
+        <div class="frames" id="bpFrames"><!-- frames rendered by script.js --></div>
+        <dl class="bp-counters mono" id="bpCounters">
+          <div><dt>hits</dt><dd id="ctHits">0</dd></div>
+          <div><dt>misses</dt><dd id="ctMisses">0</dd></div>
+          <div><dt>evictions</dt><dd id="ctEvictions">0</dd></div>
+          <div><dt>write-backs</dt><dd id="ctWritebacks">0</dd></div>
+        </dl>
+      </div>
+
+      <div class="bp-right">
+        <div class="panel">
+          <p class="panel-title mono">fetch a page</p>
+          <p class="bp-select-label">page id</p>
+          <div class="page-chips" role="group" aria-label="Page id to fetch" id="bpChips">
+            <button class="chip mono" data-page="0" aria-pressed="true">0</button>
+            <button class="chip mono" data-page="1">1</button>
+            <button class="chip mono" data-page="2">2</button>
+            <button class="chip mono" data-page="3">3</button>
+            <button class="chip mono" data-page="4">4</button>
+            <button class="chip mono" data-page="5">5</button>
+          </div>
+          <div class="panel-actions">
+            <button class="btn btn-primary" id="bpFetch">Fetch page</button>
+            <button class="btn btn-ghost" id="bpModify" title="Simulates an insert or delete touching this page while it is cached">Modify — mark dirty</button>
+            <button class="btn btn-ghost" id="bpReset">Reset</button>
+          </div>
+        </div>
+
+        <div class="flow mono" id="bpFlow" aria-label="fetch_page decision flow">
+          <div class="fnode" data-f="request"><span>page requested</span></div>
+          <div class="fdown" aria-hidden="true">↓</div>
+          <div class="frow" data-f="hit">
+            <span class="fq">in a frame? <em class="fyes">YES → return frame · hit++</em></span>
+          </div>
+          <div class="fdown fno" aria-hidden="true">NO ↓</div>
+          <div class="frow" data-f="empty">
+            <span class="fq">empty frame? <em class="fyes">YES → load into it · miss++</em></span>
+          </div>
+          <div class="fdown fno" aria-hidden="true">NO ↓</div>
+          <div class="fnode" data-f="evict"><span>evict frames[next_victim] · eviction++</span></div>
+          <div class="fdown" aria-hidden="true">↓</div>
+          <div class="frow" data-f="dirty">
+            <span class="fq">victim dirty? <em class="fyes">YES → write back to disk · write-back++</em></span>
+          </div>
+          <div class="fdown fno" aria-hidden="true">NO ↓</div>
+          <div class="fnode" data-f="load"><span>load page into freed frame · miss++</span></div>
+        </div>
+
+        <div class="bp-log mono" id="bpLog" aria-live="polite">
+          <p class="log-hint">Simulation — replays the exact policy of <code>storage/buffer_pool.cpp</code>. No engine code runs in this page.</p>
+        </div>
+
+        <figure class="shot" data-shot="buffer-pool">
+          <span class="shot-ph mono">assets/screenshots/buffer-pool.png</span>
+          <img src="assets/screenshots/bufferpool.png" alt="Buffer pool state printed by the demo binary" >
+          <!-- <figcaption class="mono">optional screenshot slot — assets/screenshots/buffer-pool.png</figcaption> -->
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- ============ 5 · RECORD LIFECYCLE ============ -->
+<section class="section" id="lifecycle">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">04</p>
+      <h2>From Insert to Disk</h2>
+      <p class="sec-desc">The path a single record takes through the engine. Step through it — every stage below corresponds to real code, from <code>main.cpp</code>’s menu to the 4 KB write that outlives the process.</p>
+    </header>
+
+    <div class="lc-panel">
+      <ol class="lc-chain" id="lcChain">
+        <li class="mono"><span>INSERT</span></li>
+        <li class="mono"><span>HeapFile</span></li>
+        <li class="mono"><span>Page</span></li>
+        <li class="mono"><span>BufferPool</span></li>
+        <li class="mono"><span>Dirty Page</span></li>
+        <li class="mono"><span>Flush</span></li>
+        <li class="mono"><span>Disk</span></li>
+      </ol>
+      <div class="lc-detail">
+        <p class="lc-count mono" id="lcCount">1 / 7</p>
+        <h3 id="lcTitle">INSERT</h3>
+        <p id="lcDesc">The CLI reads (ID, age) from the user and passes the 8-byte record to <code>HeapFile::insert()</code>.</p>
+      </div>
+      <div class="panel-actions lc-actions">
+        <button class="btn btn-ghost" id="lcPrev">← Prev</button>
+        <button class="btn btn-primary" id="lcNext">Next →</button>
+        <button class="btn btn-ghost" id="lcReset">Reset</button>
+      </div>
+    </div>
+
+    <figure class="shot shot-wide" data-shot="demo">
+      <span class="shot-ph mono">assets/videos/demo.gif</span>
+      <img src="assets/videos/demo.gif" alt="Recording of the CBase demo binary" >
+      <!-- <figcaption class="mono">optional recording slot — assets/videos/demo.gif (a capture of <code>./build/cbase_demo</code>)</figcaption> -->
+    </figure>
+  </div>
+</section>
+
+<!-- ============ 6 · ENGINEERING STORY ============ -->
+<section class="section" id="bugs">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">05</p>
+      <h2>Built, Broken, Fixed</h2>
+      <p class="sec-desc">During hardening, three serious bugs were found by execution, reproduced, root-caused, and fixed. Each now has regression coverage. This is the honest debugging timeline.</p>
+    </header>
+
+    <div class="bugs">
+      <article class="bug">
+        <header class="bug-head">
+          <span class="bug-id mono">BUG 01</span>
+          <h3>Silent Data Loss</h3>
+          <span class="bug-sev mono">critical</span>
+        </header>
+        <pre class="bug-flow mono" aria-label="Bug 1 symptom chain">multiple inserts
+      ↓
+same page repeatedly reinitialized
+      ↓
+previous records disappeared</pre>
+        <dl class="bug-detail">
+          <div><dt class="mono">root cause</dt><dd>Insert used the on-disk page count to determine whether a page was new — but dirty pages had not yet been flushed, so mid-session every insert looked like the first one on that page and re-ran the initializer.</dd></div>
+          <div><dt class="mono">fix</dt><dd>Track initialized pages in memory instead of trusting the file size.</dd></div>
+          <div><dt class="mono">result</dt><dd>Added regression coverage for multiple inserts in a single session — every record must survive.</dd></div>
+        </dl>
+      </article>
+
+      <article class="bug">
+        <header class="bug-head">
+          <span class="bug-id mono">BUG 02</span>
+          <h3>Buffer Pool Crash</h3>
+          <span class="bug-sev mono">critical</span>
+        </header>
+        <pre class="bug-flow mono" aria-label="Bug 2 symptom chain">3 frames available
+      ↓
+request 4th distinct page
+      ↓
+no eviction policy
+      ↓
+program terminated</pre>
+        <dl class="bug-detail">
+          <div><dt class="mono">root cause</dt><dd>The pool had no replacement policy: a fourth distinct page with all frames occupied called <code>exit(1)</code>. Any database larger than three pages was unreadable.</dd></div>
+          <div><dt class="mono">fix</dt><dd>Added round-robin eviction with dirty write-back.</dd></div>
+          <div><dt class="mono">result</dt><dd>Databases of any size are now readable; eviction and write-back are covered by buffer pool unit tests.</dd></div>
+        </dl>
+      </article>
+
+      <article class="bug">
+        <header class="bug-head">
+          <span class="bug-id mono">BUG 03</span>
+          <h3>CLI Infinite Loop</h3>
+          <span class="bug-sev mono">major</span>
+        </header>
+        <pre class="bug-flow mono" aria-label="Bug 3 symptom chain">invalid input
+      ↓
+std::cin enters fail state
+      ↓
+input never recovered
+      ↓
+menu printed indefinitely</pre>
+        <dl class="bug-detail">
+          <div><dt class="mono">root cause</dt><dd>A non-numeric <code>cin &gt;&gt; int</code> leaves the stream in a fail state that was never cleared, so every later read failed instantly.</dd></div>
+          <div><dt class="mono">fix</dt><dd>Added input validation and fail-state recovery (<code>cin.clear()</code> + draining the bad line).</dd></div>
+          <div><dt class="mono">result</dt><dd>Non-numeric menu input is rejected and re-prompted; the loop can no longer spin.</dd></div>
+        </dl>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7 · TEST RESULTS ============ -->
+<section class="section" id="tests">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">06</p>
+      <h2>Verification</h2>
+      <p class="sec-desc">Reported by <code>make test</code> on the project source — static facts from the actual test suite, not a live counter.</p>
+    </header>
+
+    <div class="tests-grid">
+      <div class="tests-left">
+        <p class="tests-headline mono">38 tests · 4,811 checks</p>
+        <table class="suite-table mono">
+          <caption class="sr-only">Test suites and test counts</caption>
+          <tbody>
+            <tr><td>tests/page_test.cpp</td><td>5</td></tr>
+            <tr><td>tests/disk_manager_test.cpp</td><td>8</td></tr>
+            <tr><td>tests/buffer_pool_test.cpp</td><td>9</td></tr>
+            <tr><td>tests/heap_file_test.cpp</td><td>14</td></tr>
+            <tr><td>tests/integration_test.cpp</td><td>2</td></tr>
+            <tr class="suite-total"><td>total</td><td>38</td></tr>
+          </tbody>
+        </table>
+        <p class="tests-note">Every suite also passes under AddressSanitizer and UndefinedBehaviorSanitizer, with zero compiler warnings.</p>
+      </div>
+
+      <ul class="checks">
+        <li><span class="check mono" aria-hidden="true">✓</span> Unit tests</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Integration tests</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Persistence tests</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Multi-page tests</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Buffer pool eviction</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Invalid RID handling</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Corrupt page handling</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> Regression tests</li>
+        <li class="checks-sep" aria-hidden="true"></li>
+        <li><span class="check mono" aria-hidden="true">✓</span> <span class="mono">-Wall -Wextra -Wpedantic</span> — zero warnings</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> ASan — clean</li>
+        <li><span class="check mono" aria-hidden="true">✓</span> UBSan — clean</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 8 · BENCHMARK ============ -->
+<!-- BENCHMARK: the values below come from one real run of ./cbase_bench on the
+     development machine (output preserved verbatim in the <pre> block).
+     Re-run locally and update after publishing new measurements. -->
+<section class="section" id="benchmark">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">07</p>
+      <h2>Benchmark</h2>
+      <p class="sec-desc">One run of the benchmark binary: 10,000 inserts, a full scan after reopening the file, and 1,000 random RID point reads. Timings are printed with adaptive ms/µs precision.</p>
+    </header>
+
+    <div class="bench-grid">
+      <div class="bench-stats">
+        <div class="bstat"><span class="b-num mono">10,000</span><span class="b-label">Records</span></div>
+        <div class="bstat"><span class="b-num mono">35</span><span class="b-label">Pages</span></div>
+        <div class="bstat"><span class="b-num mono">1,000 / 1,000</span><span class="b-label">Point reads verified</span></div>
+        <div class="bstat"><span class="b-num mono">32</span><span class="b-label">Evictions during load</span></div>
+      </div>
+
+      <div class="bench-times mono">
+        <div><span>Insert</span><span>1.1 ms</span></div>
+        <div><span>Scan</span><span>39.7 µs</span></div>
+        <div><span>Point reads</span><span>642.2 µs</span></div>
+        <div class="bench-total"><span>Total</span><span>1.8 ms</span></div>
+      </div>
+    </div>
+
+    <pre class="bench-output mono">CBase benchmark
+records:      10000
+page size:    4096 bytes
+pool frames:  3
+
+insert:       1.1 ms  (0.11 us/record, 3 page(s) flushed, 32 eviction(s) during load)
+scan:         39.7 us  (4.0 ns/record, 10000 record(s) recovered after reopen)
+point reads:  642.2 us  (1000/1000 RID lookups verified, 87 hit(s) / 913 miss(es))
+
+pages used:   35  (~285 record(s)/page)
+total time:   1.8 ms (insert + scan + point reads)
+database:     cbase_bench.dat</pre>
+
+    <p class="bench-note">Results depend on hardware and build configuration. Run the benchmark locally for current measurements.</p>
+
+    <p class="bench-cmd mono">g++ -std=c++17 -O2 benchmark.cpp storage/buffer_pool.cpp storage/disk_manager.cpp storage/heap_file.cpp storage/page.cpp -o cbase_bench &amp;&amp; ./cbase_bench</p>
+
+    <figure class="shot shot-wide" data-shot="benchmark">
+      <!-- <span class="shot-ph mono">assets/screenshots/benchmark.png</span> -->
+      <!-- <img src="assets/screenshots/benchmark.png" alt="Terminal capture of a benchmark run" loading="lazy"> -->
+       <img src="assets/screenshots/benchmark.png" alt="" >
+      <!-- <figcaption class="mono">optional screenshot slot — assets/screenshots/benchmark.png</figcaption> -->
+    </figure>
+  </div>
+</section>
+
+<!-- ============ 9 · LIMITATIONS ============ -->
+<section class="section" id="limitations">
+  <div class="container">
+    <header class="sec-head">
+      <p class="sec-index mono">08</p>
+      <h2>Known Limitations</h2>
+      <p class="sec-desc">Scoped, documented, and deliberate — v1 trades optimality for clarity. These are stated in the README too, not hidden.</p>
+    </header>
+
+    <ul class="limits">
+      <li>Round-robin eviction instead of LRU</li>
+      <li>No page compaction — deleted record bytes are never reclaimed</li>
+      <li>Fixed-size records — one 8-byte record type per database</li>
+      <li>Single-threaded — no concurrency control</li>
+      <li>No WAL / fsync — flush reaches the OS cache only</li>
+      <li>Raw-struct on-disk format — same-endianness assumption</li>
+      <li>No free-space map — inserts append to the current page</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<!-- ============ 10 · FOOTER ============ -->
+<footer class="site-foot">
+  <div class="container">
+    <p class="foot-brand mono">CBase</p>
+    <p class="foot-line">Built from scratch in C++.</p>
+    <div class="foot-actions">
+      <a class="btn btn-ghost" href="https://github.com/PiyushSakhuja/cbase" title="Placeholder — replace with your repository URL">GitHub</a>
+      <a class="btn btn-ghost" href="../README.md">README</a>
+    </div>
+    <p class="foot-note">The interactive diagrams on this page are educational visualizations of the engine’s documented behavior. No C++ engine code runs in the browser.</p>
+  </div>
+</footer>
+
+<script src="script.js" defer></script>
+</body>
+</html>
