@@ -30,7 +30,7 @@ The project focuses on understanding **pages, slotted-page storage, record addre
 
 ### Interactive Showcase
 
-A minimal technical showcase is included in [`website/`](website/).
+A minimal technical showcase is included in [`website/`](https://piyushsakhuja.github.io/cbase/).
 
 It visualizes:
 
